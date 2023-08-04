@@ -1,18 +1,43 @@
 (ns backend.core
-  (:require [liberator.core :refer [resource defresource]]
-            [ring.middleware.params :refer [wrap-params]]
-            [compojure.core :refer [defroutes ANY]])
+  (:require
+    [backend.web-server :as ws]
+    [backend.config :as config]
+    [backend.routes :as routes]
+    [clojure.tools.logging :as log])
   (:gen-class))
 
+(def system nil)
 
-(defroutes app
-  (ANY "/" [] (resource)))
+(defn- create-system [config-filename]
+  (component/system-map
+    :config (component/using (config/->Configuration config-filename) [])
+    :routes (component/using (routes/->Routes) [:config])
+    :web-server (component/using (ws/map->WebServer {})
+                                 [:config :routes])))
 
-(def handler 
-  (-> app 
-      wrap-params))
+(defn start
+  []
+  (if system
+    (try
+      (alter-var-root #'system component/start)
+      (catch Exception e (log/error e "Could not start system:")))
+    (log/error "System not initialised. Start failed.")))
 
+(defn stop
+  []
+  (log/info "Stopping Service.")
+  (when system
+    (alter-var-root #'system component/stop))
+  (log/info "Stopped Service."))
+
+(defn add-shutdown-hook
+  []
+  (.addShutdownHook (Runtime/getRuntime) (Thread. stop)))
 
 (defn -main
-  [& args]
-  (println "Hello"))
+  [config-filename]
+  (add-shutdown-hook)
+  (log/info "Starting project-clj-api with config:" config-filename)
+  (alter-var-root #'system (fn [_] (create-system config-filename)))
+  (start)
+  (log/info "Started project-clj-api..."))
